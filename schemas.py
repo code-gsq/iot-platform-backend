@@ -34,3 +34,15 @@ class TelemetryOut(BaseModel):
     temperature: Decimal
     humidity: Decimal
     reported_at: datetime
+
+
+# 登录时传来的账号密码
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+# 登录成功后返回的 token
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"

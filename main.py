@@ -1,8 +1,9 @@
 from fastapi import FastAPI, Depends, HTTPException
 from sqlalchemy.orm import Session
 from database import SessionLocal
-from models import Device, Telemetry, Alarm
-from schemas import DeviceCreate, DeviceOut, TelemetryCreate, TelemetryOut
+from models import Device, Telemetry, Alarm, SysUser
+from schemas import DeviceCreate, DeviceOut, TelemetryCreate, TelemetryOut, LoginRequest, TokenResponse
+from auth import create_access_token, verify_password, get_current_user
 
 app = FastAPI(title="IoT 设备管理平台")
 
@@ -14,9 +15,19 @@ def get_db():
     finally:
         db.close()
 
+# 0️⃣ 登录：校验账号密码，签发 JWT（这是唯一不需要 token 的接口）
+@app.post("/auth/login", response_model=TokenResponse)
+def login(data: LoginRequest, db: Session = Depends(get_db)):
+    user = db.query(SysUser).filter(SysUser.username == data.username).first()
+    if not user or not verify_password(data.password, user.password):
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    token = create_access_token(user.username, user.role)
+    return {"access_token": token, "token_type": "bearer"}
+
+
 # ① 注册设备（改后：先查重，重复给友好提示）
 @app.post("/devices", response_model=DeviceOut)
-def create_device(device: DeviceCreate, db: Session = Depends(get_db)):
+def create_device(device: DeviceCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     # 查重：这个 device_key 是否已经被注册过
     exists = db.query(Device).filter(Device.device_key == device.device_key).first()
     if exists:
@@ -30,7 +41,7 @@ def create_device(device: DeviceCreate, db: Session = Depends(get_db)):
 
 # ② 设备上报温湿度（温度 > 80 自动记告警）
 @app.post("/devices/{device_id}/telemetry", response_model=TelemetryOut)
-def report_telemetry(device_id: int, data: TelemetryCreate, db: Session = Depends(get_db)):
+def report_telemetry(device_id: int, data: TelemetryCreate, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     device = db.get(Device, device_id)
     if not device:
         raise HTTPException(status_code=404, detail="设备不存在")
@@ -52,7 +63,7 @@ def report_telemetry(device_id: int, data: TelemetryCreate, db: Session = Depend
 
 # ③ 查某设备的历史数据（按时间倒序，只取最近 limit 条，默认 100）
 @app.get("/devices/{device_id}/telemetry", response_model=list[TelemetryOut])
-def list_telemetry(device_id: int, limit: int = 100, db: Session = Depends(get_db)):
+def list_telemetry(device_id: int, limit: int = 100, db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     # 不写 limit 的话，设备数据多了会把几十万条全吐出来，慢且浪费
     return (
         db.query(Telemetry)
@@ -64,5 +75,5 @@ def list_telemetry(device_id: int, limit: int = 100, db: Session = Depends(get_d
 
 # ④ 设备列表
 @app.get("/devices", response_model=list[DeviceOut])
-def list_devices(db: Session = Depends(get_db)):
+def list_devices(db: Session = Depends(get_db), user: dict = Depends(get_current_user)):
     return db.query(Device).all()
